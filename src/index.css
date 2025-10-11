@@ -1,0 +1,127 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root { height: 100%; }
+
+body {
+  background-image: radial-gradient(1200px 600px at 20% 30%, rgba(37,230,247,0.15), transparent),
+                    radial-gradient(800px 400px at 80% 40%, rgba(138,255,90,0.12), transparent),
+                    linear-gradient(180deg, #071722 0%, #0A2335 100%);
+  background-attachment: fixed;
+  @apply text-gray-900 dark:text-gray-100 font-mono transition-colors duration-300;
+}
+
+/* Minimalist card component with smooth motion */
+.card {
+  @apply rounded-xl p-4 transition-all duration-300 bg-panel/60 border border-cyan-400/20 shadow-[0_0_0_1px_rgba(37,230,247,0.1)];
+  box-shadow: 0 0 24px rgba(37,230,247,0.08), inset 0 0 8px rgba(10,35,53,0.8);
+}
+.card:hover { box-shadow: 0 0 28px rgba(37,230,247,0.14); transform: translateY(-1px); }
+
+/* Glass-like header */
+.glass-header {
+  @apply bg-darkMuted/70 border-b border-cyan-400/20 backdrop-blur;
+  box-shadow: 0 0 18px rgba(37,230,247,0.12);
+}
+
+/* Utility for subtle interactive links */
+.soft-link { @apply hover:opacity-80 transition-opacity duration-200 text-primary; }
+
+/* Neon button */
+.btn-neon {
+  @apply relative inline-flex items-center justify-center px-4 py-2 rounded border border-primary/40 text-primary font-semibold tracking-wide;
+}
+.btn-neon::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 0.75rem;
+  box-shadow: 0 0 12px rgba(37,230,247,0.6), inset 0 0 12px rgba(37,230,247,0.15);
+  pointer-events: none;
+}
+.btn-neon:hover { box-shadow: 0 0 18px rgba(37,230,247,0.7); }
+
+/* Status badge */
+.badge { @apply px-2 py-1 rounded text-xs font-semibold tracking-wide; }
+.badge-success { @apply text-accent border border-accent/40; }
+.badge-danger { @apply text-danger border border-danger/40; }
+.badge-muted { @apply text-primary border border-primary/40; }
+/* Badge específica para datas: cor de fundo sutil no claro e contraste no escuro */
+.badge-dates {
+  @apply px-2 py-1 rounded text-xs font-semibold tracking-wide;
+  background-color: rgba(37,230,247,0.12); /* claro: leve ciano */
+  color: #071722; /* texto mais escuro para maior contraste em modo claro */
+  border: 1px solid rgba(37,230,247,0.35);
+}
+.dark .badge-dates {
+  background-color: rgba(37,230,247,0.18);
+  color: #E8F7FF; /* texto claro no escuro */
+  border-color: rgba(37,230,247,0.45);
+}
+
+/* Status dots */
+.dot { display:inline-block; width:10px; height:10px; border-radius:9999px; box-shadow:0 0 8px currentColor; }
+.dot-success { color:#8AFF5A; background:#8AFF5A; }
+.dot-warning { color:#FFD166; background:#FFD166; }
+.dot-danger  { color:#FF3B7F; background:#FF3B7F; }
+.dot-muted   { color:#25E6F7; background:#25E6F7; opacity:.8; }
+
+/* Dark mode form/text helpers */
+.dark .form-label { @apply text-gray-200; }
+.dark .muted { @apply text-gray-300; }
+.dark .table-cell { @apply text-gray-100; }
+
+/* Subtle page fade-up motion */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.fade-up {
+  animation: fadeUp 250ms ease-out;
+}
+/* Glow para o logo */
+.logo-glow { box-shadow: 0 0 12px rgba(37,230,247,0.6); background: rgba(12,43,67,0.4); }
+
+/* Inputs legíveis (texto e placeholder) em temas claro/escuro */
+input[type="text"], input[type="email"], input[type="password"], input[type="search"], input:not([type]), textarea, select {
+  @apply bg-white text-gray-900 border border-cyan-400/30 rounded px-3 py-2;
+  /* Modo claro: fundo claro e texto preto para máxima legibilidade */
+  color: #111827; /* gray-900 */
+  caret-color: #25E6F7;
+}
+/* Modo escuro: manter fundo escuro e texto claro */
+.dark input[type="text"], .dark input[type="email"], .dark input[type="password"], .dark input[type="search"], .dark input:not([type]), .dark textarea, .dark select {
+  @apply bg-panel/60 text-gray-100;
+  color: #F3F4F6; /* gray-100 */
+}
+/* Placeholders diferenciados por tema */
+input::placeholder, textarea::placeholder {
+  color: #6B7280; /* gray-500 */
+}
+.dark input::placeholder, .dark textarea::placeholder {
+  color: #9CA3AF; /* gray-400 */
+}
+/* Garantir cor para inputs de data em navegadores WebKit */
+input[type="date"] {
+  color: #000000; /* preto no modo claro */
+}
+input[type="date"]::-webkit-datetime-edit-text,
+input[type="date"]::-webkit-datetime-edit-month-field,
+input[type="date"]::-webkit-datetime-edit-day-field,
+input[type="date"]::-webkit-datetime-edit-year-field {
+  color: #000000; /* preto no modo claro */
+}
+.dark input[type="date"] {
+  color: #F3F4F6; /* gray-100 */
+}
+.dark input[type="date"]::-webkit-datetime-edit-text,
+.dark input[type="date"]::-webkit-datetime-edit-month-field,
+.dark input[type="date"]::-webkit-datetime-edit-day-field,
+.dark input[type="date"]::-webkit-datetime-edit-year-field {
+  color: #F3F4F6; /* gray-100 */
+}
+input:focus, textarea:focus, select:focus {
+  @apply ring-2 ring-cyan-400/40 border-cyan-400/60;
+  outline: none;
+}
