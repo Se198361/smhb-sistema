@@ -15,9 +15,19 @@ if (typeof supabaseUrl === 'string' && supabaseUrl && typeof supabaseAnonKey ===
     onAuthStateChange: (_event, _cb) => ({ data: { subscription: { unsubscribe: () => {} } } }),
     signInWithPassword: async () => ({ data: null, error: new Error('Supabase não configurado') }),
     signOut: async () => ({ error: null }),
+    resetPasswordForEmail: async () => ({ data: null, error: new Error('Supabase não configurado') }),
+  }
+  const mockStorage = {
+    from: (_bucket) => ({
+      list: async (_path, _opts) => ({ data: [], error: new Error('Supabase não configurado') }),
+      download: async (_path) => ({ data: null, error: new Error('Supabase não configurado') }),
+      upload: async (_path, _file, _opts) => ({ data: null, error: new Error('Supabase não configurado') }),
+      remove: async (_paths) => ({ data: null, error: new Error('Supabase não configurado') }),
+      getPublicUrl: (_path) => ({ data: { publicUrl: '' }, error: new Error('Supabase não configurado') }),
+    }),
   }
   // manter apenas auth para que páginas detectem ausência de supabase.from
-  supabase = { auth: mockAuth }
+  supabase = { auth: mockAuth, storage: mockStorage }
 }
 
 export { supabase }
