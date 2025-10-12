@@ -39,69 +39,38 @@ export default function Financas() {
   }
 
   useEffect(() => {
-    async function load() {
+    async function fetchFinancas() {
       try {
-        const fallbackLocal = () => {
-          const raw = localStorage.getItem('financas-list')
-          const list = raw ? JSON.parse(raw) : []
-          list.sort((a, b) => String(b.data).localeCompare(String(a.data)))
-          setItems(list)
-        }
-        if (supabase.from) {
-          try {
-            const { data, error } = await supabase
-              .from('financas')
-              .select('*')
-              .order('data', { ascending: false })
-            if (error) throw error
-            if (Array.isArray(data)) {
-              setItems(data)
-              // Migração automática: inserir no Supabase itens existentes no localStorage que não estejam na tabela
-              try {
-                const rawLocal = localStorage.getItem('financas-list')
-                const localList = rawLocal ? JSON.parse(rawLocal) : []
-                const keyOf = (i) => `${String(i.tipo)}|${String(i.valor)}|${String(i.data).slice(0,10)}|${String(i.pagante||'')}`
-                const keysRemote = new Set(data.map(keyOf))
-                const toInsert = (Array.isArray(localList) ? localList : []).filter(i => !keysRemote.has(keyOf(i)))
-                if (toInsert.length) {
-                  const normalized = toInsert.map(i => ({
-                    tipo: i.tipo,
-                    valor: Number(i.valor||0),
-                    data: String(i.data).slice(0,10),
-                    pagante: String(i.pagante||'').trim(),
-                    uso: String(i.tipo) === 'despesa' ? String(i.uso||'').trim() : ''
-                  }))
-                  const { data: insertedRows, error: insertErr } = await supabase
-                    .from('financas')
-                    .insert(normalized)
-                    .select('*')
-                  if (!insertErr && Array.isArray(insertedRows)) {
-                    const merged = [...insertedRows, ...data].sort((a, b) => String(b.data).localeCompare(String(a.data)))
-                    setItems(merged)
-                    try { localStorage.setItem('financas-list', JSON.stringify(merged)) } catch {}
-                    try { window.dispatchEvent(new CustomEvent('financas:updated')) } catch {}
-                  }
-                }
-              } catch (migErr) {
-                console.warn('Migração automática de finanças falhou ou não necessária:', migErr)
-              }
-            } else {
-              fallbackLocal()
-            }
-          } catch (err) {
-            console.warn('Supabase indisponível, usando localStorage:', err)
-            fallbackLocal()
-          }
-        } else {
-          fallbackLocal()
-        }
+        if (!supabase.from) throw new Error('Supabase não configurado')
+        const { data, error } = await supabase
+          .from('financas')
+          .select('*')
+          .order('data', { ascending: false })
+        if (error) throw error
+        setItems(Array.isArray(data) ? data : [])
       } catch (e) {
-        console.error(e)
+        console.error('Falha ao carregar finanças do banco:', e)
+        setItems([])
       } finally {
         setLoading(false)
       }
     }
-    load()
+    fetchFinancas()
+
+    // Realtime: refletir mudanças para todos usuários/navegadores
+    try {
+      const channel = supabase.channel ? supabase.channel('financas_changes') : null
+      if (channel) {
+        channel
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'financas' }, async () => {
+            try { await fetchFinancas() } catch {}
+          })
+          .subscribe()
+        return () => {
+          try { supabase.removeChannel && supabase.removeChannel(channel) } catch {}
+        }
+      }
+    } catch {}
   }, [])
 
   const totalReceitas = useMemo(() => items.filter(i => i.tipo !== 'despesa').reduce((acc, i) => acc + Number(i.valor || 0), 0), [items])
@@ -117,29 +86,15 @@ export default function Financas() {
     }
 
     try {
-      if (supabase.from) {
-        const { data: inserted, error } = await supabase
-          .from('financas')
-          .insert([{ tipo, valor: vNum, data, pagante, uso: tipo === 'despesa' ? uso : '' }])
-          .select()
-        if (error) {
-          console.error(error)
-          // Fallback local se inserir falhar por schema diferente
-          const novoLocal = { id: Date.now(), tipo, valor: vNum, data, pagante, uso: tipo === 'despesa' ? uso : '' }
-          const nextLocal = [novoLocal, ...items].sort((a, b) => String(b.data).localeCompare(String(a.data)))
-          setItems(nextLocal)
-          localStorage.setItem('financas-list', JSON.stringify(nextLocal))
-        } else {
-          const novo = Array.isArray(inserted) ? inserted[0] : inserted
-          setItems(prev => [novo, ...prev].sort((a, b) => String(b.data).localeCompare(String(a.data))))
-        }
-      } else {
-        const novo = { id: Date.now(), tipo, valor: vNum, data, pagante, uso: tipo === 'despesa' ? uso : '' }
-        const next = [novo, ...items].sort((a, b) => String(b.data).localeCompare(String(a.data)))
-        setItems(next)
-        localStorage.setItem('financas-list', JSON.stringify(next))
-      }
-      // Notificar Dashboard para atualizar imediatamente
+      if (!supabase.from) throw new Error('Supabase não configurado')
+      const { data: inserted, error } = await supabase
+        .from('financas')
+        .insert([{ tipo, valor: vNum, data, pagante, uso: tipo === 'despesa' ? uso : '' }])
+        .select()
+      if (error) throw error
+      const novo = Array.isArray(inserted) ? inserted[0] : inserted
+      setItems(prev => [novo, ...prev].sort((a, b) => String(b.data).localeCompare(String(a.data))))
+      // Notificar Dashboard para atualizar imediatamente (opcional)
       try { window.dispatchEvent(new CustomEvent('financas:updated')) } catch {}
       // limpar e fechar
       setTipo('')
@@ -311,27 +266,21 @@ export default function Financas() {
     const ok = window.confirm('Excluir este lançamento?')
     if (!ok) return
     try {
-      // Excluir no Supabase quando disponível para refletir em todos os usuários/navegadores
-      if (supabase.from) {
-        if (item?.id != null) {
-          const { error } = await supabase.from('financas').delete().eq('id', item.id)
-          if (error) throw error
-        } else {
-          // Melhor esforço: excluir por composição dos campos quando não há id
-          try {
-            const { error } = await supabase
-              .from('financas')
-              .delete()
-              .eq('tipo', String(item.tipo))
-              .eq('valor', Number(item.valor || 0))
-              .eq('data', String(item.data).slice(0, 10))
-              .eq('pagante', String(item.pagante || '').trim())
-              .eq('uso', String(item.tipo) === 'despesa' ? String(item.uso || '').trim() : '')
-            if (error) console.warn('Falha ao excluir remoto por composição:', error)
-          } catch (e) {
-            console.warn('Exclusão remota por composição não realizada:', e)
-          }
-        }
+      if (!supabase.from) throw new Error('Supabase não configurado')
+      if (item?.id != null) {
+        const { error } = await supabase.from('financas').delete().eq('id', item.id)
+        if (error) throw error
+      } else {
+        // Melhor esforço: excluir por composição dos campos quando não há id
+        const { error } = await supabase
+          .from('financas')
+          .delete()
+          .eq('tipo', String(item.tipo))
+          .eq('valor', Number(item.valor || 0))
+          .eq('data', String(item.data).slice(0, 10))
+          .eq('pagante', String(item.pagante || '').trim())
+          .eq('uso', String(item.tipo) === 'despesa' ? String(item.uso || '').trim() : '')
+        if (error) throw error
       }
       // Atualizar lista local e localStorage
       const next = items.filter((i) => {
@@ -346,7 +295,6 @@ export default function Financas() {
         return !isSame
       }).sort((a, b) => String(b.data).localeCompare(String(a.data)))
       setItems(next)
-      try { localStorage.setItem('financas-list', JSON.stringify(next)) } catch {}
       try { window.dispatchEvent(new CustomEvent('financas:updated')) } catch {}
     } catch (e) {
       console.error(e)
@@ -360,17 +308,11 @@ export default function Financas() {
     const ok = window.confirm(`Excluir TODOS os lançamentos do tipo "${label}"?`)
     if (!ok) return
     try {
-      if (supabase.from) {
-        try {
-          const { error } = await supabase.from('financas').delete().eq('tipo', deleteTipo)
-          if (error) throw error
-        } catch (e) {
-          console.warn('Falha ao excluir no Supabase por tipo:', e)
-        }
-      }
+      if (!supabase.from) throw new Error('Supabase não configurado')
+      const { error } = await supabase.from('financas').delete().eq('tipo', deleteTipo)
+      if (error) throw error
       const next = items.filter(i => String(i.tipo) !== String(deleteTipo))
       setItems(next)
-      try { localStorage.setItem('financas-list', JSON.stringify(next)) } catch {}
       try { window.dispatchEvent(new CustomEvent('financas:updated')) } catch {}
       setDeleteTipo('')
     } catch (e) {
