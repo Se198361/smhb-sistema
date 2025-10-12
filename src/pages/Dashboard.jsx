@@ -31,27 +31,11 @@ export default function Dashboard() {
 
   async function loadUpcomingEvents() {
     try {
-      const readLocal = () => {
-        const raw = localStorage.getItem('eventos-list')
-        const list = raw ? JSON.parse(raw) : []
-        return Array.isArray(list) ? list : []
-      }
-      let list = readLocal()
-      // Se Supabase estiver presente, tenta buscar para sincronizar, mas cai para local
-      if (supabase.from) {
-        try {
-          const { data: rows, error } = await supabase
-            .from('eventos')
-            .select('*')
-            .order('data', { ascending: true })
-          if (!error && Array.isArray(rows)) {
-            list = rows
-            try { localStorage.setItem('eventos-list', JSON.stringify(rows)) } catch {}
-          }
-        } catch (err) {
-          console.warn('Supabase indisponível ao carregar eventos. Usando localStorage.', err)
-        }
-      }
+      const { data: list, error } = await supabase
+        .from('eventos')
+        .select('*')
+        .order('data', { ascending: true })
+      if (error) throw error
       const todayMid = new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate()).getTime()
       const toDateTime = (ev) => {
         const base = ev?.data ? String(ev.data) : ''
@@ -60,7 +44,7 @@ export default function Dashboard() {
         const d = new Date(iso)
         return Number.isNaN(d.getTime()) ? new Date(ev?.data) : d
       }
-      const upcoming = list
+      const upcoming = (list || [])
         .filter(e => e && e.titulo && e.data)
         .map(e => ({ ...e, dataObj: toDateTime(e) }))
         .filter(e => !Number.isNaN(e.dataObj.getTime()) && e.dataObj.getTime() >= todayMid)
@@ -102,28 +86,11 @@ export default function Dashboard() {
     try {
       const today = new Date()
       const msDay = 24 * 60 * 60 * 1000
-      const readLocal = () => {
-        try {
-          const raw = localStorage.getItem('membros-list')
-          const list = raw ? JSON.parse(raw) : []
-          return Array.isArray(list) ? list : []
-        } catch { return [] }
-      }
-      let list = readLocal()
-      if (supabase.from) {
-        try {
-          const { data: rows, error } = await supabase
-            .from('membros')
-            .select('nome,aniversario')
-          if (!error && Array.isArray(rows)) {
-            list = rows
-            try { localStorage.setItem('membros-list', JSON.stringify(rows)) } catch {}
-          }
-        } catch (err) {
-          console.warn('Supabase indisponível ao carregar membros, usando localStorage:', err)
-        }
-      }
-      const upcoming = list
+      const { data: list, error } = await supabase
+        .from('membros')
+        .select('nome,aniversario')
+      if (error) throw error
+      const upcoming = (list || [])
         .filter(m => m && m.nome && m.aniversario)
         .map(m => {
           const next = nextBirthdayDate(m.aniversario)
@@ -145,45 +112,40 @@ export default function Dashboard() {
     let cancelled = false
     async function fetchAvisos() {
       try {
-        if (supabase.from) {
-          const { data, error } = await supabase
-            .from('avisos')
-            .select('*')
-            .order('id', { ascending: false })
-            .limit(10)
-          if (error) throw error
-          if (!cancelled) setAvisos(data || [])
-        } else {
-          // Fallback para localStorage quando supabase não está configurado
-          const raw = localStorage.getItem('avisos-list')
-          const list = raw ? JSON.parse(raw) : []
-          if (!cancelled) setAvisos(Array.isArray(list) ? list.slice(0, 10) : [])
-        }
+        const { data, error } = await supabase
+          .from('avisos')
+          .select('*')
+          .order('id', { ascending: false })
+          .limit(10)
+        if (error) throw error
+        if (!cancelled) setAvisos(data || [])
       } catch (e) {
         console.error('Erro ao carregar avisos recentes:', e)
       }
     }
     fetchAvisos()
     const refetch = setInterval(fetchAvisos, 15000)
-    return () => { cancelled = true; clearInterval(refetch) }
+    const chA = supabase
+      .channel('dashboard-avisos')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'avisos' }, fetchAvisos)
+      .subscribe()
+    return () => { cancelled = true; clearInterval(refetch); try { chA.unsubscribe() } catch {} }
   }, [])
 
   useEffect(() => {
     loadBirthdays()
     loadUpcomingEvents()
-    const onUpdated = () => loadBirthdays()
-    const onStorage = (e) => { if (e && e.key === 'membros-list') loadBirthdays() }
-    window.addEventListener('membros:updated', onUpdated)
-    window.addEventListener('storage', onStorage)
-    const onEventsUpdated = () => loadUpcomingEvents()
-    const onEventsStorage = (e) => { if (e && e.key === 'eventos-list') loadUpcomingEvents() }
-    window.addEventListener('eventos:updated', onEventsUpdated)
-    window.addEventListener('storage', onEventsStorage)
+    const chM = supabase
+      .channel('dashboard-membros')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'membros' }, loadBirthdays)
+      .subscribe()
+    const chE = supabase
+      .channel('dashboard-eventos')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'eventos' }, loadUpcomingEvents)
+      .subscribe()
     return () => {
-      window.removeEventListener('membros:updated', onUpdated)
-      window.removeEventListener('storage', onStorage)
-      window.removeEventListener('eventos:updated', onEventsUpdated)
-      window.removeEventListener('storage', onEventsStorage)
+      try { chM.unsubscribe() } catch {}
+      try { chE.unsubscribe() } catch {}
     }
   }, [])
 
@@ -192,25 +154,11 @@ export default function Dashboard() {
     async function fetchFinance() {
       try {
         if (!cancelled) setFinanceLoading(true)
-        const fallbackLocal = () => {
-          const raw = localStorage.getItem('financas-list')
-          return raw ? JSON.parse(raw) : []
-        }
-        let data = []
-        if (supabase.from) {
-          try {
-            const { data: rows, error } = await supabase
-              .from('financas')
-              .select('tipo,valor')
-            if (error) throw error
-            data = Array.isArray(rows) ? rows : fallbackLocal()
-          } catch (err) {
-            console.warn('Supabase indisponível, usando localStorage:', err)
-            data = fallbackLocal()
-          }
-        } else {
-          data = fallbackLocal()
-        }
+        const { data: rows, error } = await supabase
+          .from('financas')
+          .select('tipo,valor')
+        if (error) throw error
+        const data = Array.isArray(rows) ? rows : []
         const toNum = (v) => {
           if (typeof v === 'string') {
             const n = Number(v.replace(/\./g, '').replace(',', '.'))
@@ -234,11 +182,11 @@ export default function Dashboard() {
     }
     fetchFinance()
     const refetch = setInterval(fetchFinance, 20000)
-    const onUpdated = () => fetchFinance()
-    const onStorage = (e) => { if (e && e.key === 'financas-list') fetchFinance() }
-    window.addEventListener('financas:updated', onUpdated)
-    window.addEventListener('storage', onStorage)
-    return () => { cancelled = true; clearInterval(refetch); window.removeEventListener('financas:updated', onUpdated); window.removeEventListener('storage', onStorage) }
+    const chF = supabase
+      .channel('dashboard-financas')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'financas' }, fetchFinance)
+      .subscribe()
+    return () => { cancelled = true; clearInterval(refetch); try { chF.unsubscribe() } catch {} }
   }, [])
 
   useEffect(() => {
