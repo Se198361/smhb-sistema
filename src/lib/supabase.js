@@ -19,7 +19,7 @@ if (typeof supabaseUrl === 'string' && supabaseUrl && typeof supabaseAnonKey ===
   }
   const mockStorage = {
     from: (_bucket) => ({
-      list: async (_path, _opts) => ({ data: [], error: new Error('Supabase não configurado') }),
+      list: async (_path, _opts) => ({ data: [], error: null }),
       download: async (_path) => ({ data: null, error: new Error('Supabase não configurado') }),
       upload: async (_path, _file, _opts) => ({ data: null, error: new Error('Supabase não configurado') }),
       remove: async (_paths) => ({ data: null, error: new Error('Supabase não configurado') }),

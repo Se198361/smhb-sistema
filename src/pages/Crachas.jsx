@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { supabase } from '../lib/supabase'
 
 export default function Crachas() {
   const [nome, setNome] = useState('')
@@ -31,7 +32,64 @@ export default function Crachas() {
         if (bname) setBackName(bname)
       }
     } catch {}
+    // Carregar defaults do Storage se existir e não houver localStorage
+    (async () => {
+      try {
+        if (supabase.storage) {
+          const bucket = supabase.storage.from('crachas')
+          if (!templateImg) {
+            const pub = bucket.getPublicUrl('templates/template.png')
+            const url = pub?.data?.publicUrl
+            if (url) setTemplateImg(url)
+          }
+          if (!backImg) {
+            const pub = bucket.getPublicUrl('templates/back.png')
+            const url = pub?.data?.publicUrl
+            if (url) setBackImg(url)
+          }
+        }
+      } catch {}
+    })()
   }, [])
+
+  // Migração automática: se o template/costa estiverem como dataURL, envia para Supabase Storage e passa a usar URL pública
+  useEffect(() => {
+    (async () => {
+      try {
+        if (!supabase.storage) return
+        // Template
+        if (templateImg && String(templateImg).startsWith('data:')) {
+          const publicUrl = await uploadImageToStorage(String(templateImg), 'templates/template.png')
+          if (publicUrl) {
+            setTemplateImg(publicUrl)
+            try { localStorage.setItem('badge-template', JSON.stringify({ img: publicUrl, name: templateName || 'template.png' })) } catch {}
+          }
+        }
+        // Costa
+        if (backImg && String(backImg).startsWith('data:')) {
+          const publicUrl = await uploadImageToStorage(String(backImg), 'templates/back.png')
+          if (publicUrl) {
+            setBackImg(publicUrl)
+            try { localStorage.setItem('badge-back', JSON.stringify({ img: publicUrl, name: backName || 'back.png' })) } catch {}
+          }
+        }
+      } catch (e) {
+        console.warn('Migração automática de imagens de crachás para Storage falhou:', e)
+      }
+    })()
+  }, [templateImg, backImg, templateName, backName])
+
+  // Sincroniza localStorage quando estiver usando URLs públicas (não dataURL)
+  useEffect(() => {
+    try {
+      if (templateImg && !String(templateImg).startsWith('data:')) {
+        localStorage.setItem('badge-template', JSON.stringify({ img: templateImg, name: templateName || 'template.png' }))
+      }
+      if (backImg && !String(backImg).startsWith('data:')) {
+        localStorage.setItem('badge-back', JSON.stringify({ img: backImg, name: backName || 'back.png' }))
+      }
+    } catch {}
+  }, [templateImg, backImg, templateName, backName])
 
   function handleFotoChange(e) {
     const file = e.target.files?.[0]
@@ -163,6 +221,14 @@ export default function Crachas() {
       const url = String(reader.result || '')
       setTemplateImg(url)
       try { localStorage.setItem('badge-template', JSON.stringify({ img: url, name })) } catch {}
+      // Upload para Storage e usar URL pública para compartilhar entre navegadores
+      (async () => {
+        const publicUrl = await uploadImageToStorage(url, 'templates/template.png')
+        if (publicUrl) {
+          setTemplateImg(publicUrl)
+          try { localStorage.setItem('badge-template', JSON.stringify({ img: publicUrl, name })) } catch {}
+        }
+      })()
     }
     reader.readAsDataURL(file)
   }
@@ -185,8 +251,33 @@ export default function Crachas() {
       const url = String(reader.result || '')
       setBackImg(url)
       try { localStorage.setItem('badge-back', JSON.stringify({ img: url, name })) } catch {}
+      (async () => {
+        const publicUrl = await uploadImageToStorage(url, 'templates/back.png')
+        if (publicUrl) {
+          setBackImg(publicUrl)
+          try { localStorage.setItem('badge-back', JSON.stringify({ img: publicUrl, name })) } catch {}
+        }
+      })()
     }
     reader.readAsDataURL(file)
+  }
+
+  // Opcional: upload das imagens para Supabase Storage para persistência entre dispositivos
+  async function uploadImageToStorage(dataUrl, path) {
+    try {
+      if (!supabase.storage) return null
+      const bucket = supabase.storage.from('crachas')
+      // Converter dataURL para Blob
+      const res = await fetch(dataUrl)
+      const blob = await res.blob()
+      const { data, error } = await bucket.upload(path, blob, { upsert: true, contentType: blob.type || 'image/png' })
+      if (error) throw error
+      const publicUrl = bucket.getPublicUrl(path)?.data?.publicUrl
+      return publicUrl || null
+    } catch (e) {
+      console.warn('Falha ao enviar imagem para Storage:', e)
+      return null
+    }
   }
 
   function formatBR(iso) {

@@ -45,6 +45,31 @@ export default function Avisos() {
           const list = data || []
           setAvisos(list)
           setHasMore(list.length === pageSize)
+          // Migração automática: inserir itens de localStorage que não existem ainda
+          try {
+            const rawLocal = localStorage.getItem('avisos-list')
+            const localList = rawLocal ? JSON.parse(rawLocal) : []
+            const keyOf = (a) => `${String(a.titulo||'').trim()}|${(Array.isArray(a.periodos)&&a.periodos[0]?.inicio)||String((Array.isArray(a.datas)&&a.datas[0])||'').slice(0,10)}`
+            const keysRemote = new Set(list.map(keyOf))
+            const toInsert = (Array.isArray(localList)?localList:[]).filter(a => !keysRemote.has(keyOf(a)))
+            if (toInsert.length) {
+              const normalized = toInsert.map(a => {
+                const periods = Array.isArray(a.periodos) && a.periodos.length ? a.periodos : (Array.isArray(a.datas)? a.datas.map(d => ({inicio: d, fim: d})) : [])
+                return { titulo: String(a.titulo||'').trim(), periodos: periods }
+              })
+              const { data: insertedRows, error: insertErr } = await supabase
+                .from('avisos')
+                .insert(normalized)
+                .select('*')
+              if (!insertErr && Array.isArray(insertedRows)) {
+                const merged = [...insertedRows, ...list]
+                setAvisos(merged.slice(0, pageSize))
+                setHasMore(merged.length >= pageSize)
+              }
+            }
+          } catch (migErr) {
+            console.warn('Migração automática de avisos para Supabase falhou:', migErr)
+          }
         } else {
           const seed = [
             { id: 1, titulo: 'Jejum congregacional na sexta', criadoEm: '2025-10-07' },

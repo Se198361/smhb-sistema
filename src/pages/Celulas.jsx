@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { supabase } from '../lib/supabase'
 
 export default function Celulas() {
   const [items, setItems] = useState([])
@@ -7,11 +8,58 @@ export default function Celulas() {
   const [foto, setFoto] = useState('')
 
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem('diretoria-list')
-      const list = raw ? JSON.parse(raw) : []
-      setItems(Array.isArray(list) ? list : [])
-    } catch {}
+    async function load() {
+      try {
+        if (supabase.from) {
+          const { data, error } = await supabase
+            .from('diretoria')
+            .select('id,nome,cargo,foto')
+            .order('id', { ascending: true })
+          if (error) throw error
+          const list = Array.isArray(data) ? data : []
+          setItems(list)
+          try { localStorage.setItem('diretoria-list', JSON.stringify(list)) } catch {}
+          // Migração automática: inserir no Supabase itens existentes no localStorage que não estejam na tabela
+          try {
+            const rawLocal = localStorage.getItem('diretoria-list')
+            const localList = rawLocal ? JSON.parse(rawLocal) : []
+            const keyOf = (p) => `${String(p.nome||'').trim()}|${String(p.cargo||'').trim()}`
+            const keysRemote = new Set(list.map(keyOf))
+            const toInsert = (Array.isArray(localList) ? localList : []).filter(p => !keysRemote.has(keyOf(p)))
+            if (toInsert.length) {
+              const normalized = toInsert.map(p => ({
+                nome: String(p.nome||'').trim(),
+                cargo: String(p.cargo||'').trim(),
+                foto: p.foto || ''
+              }))
+              const { data: insertedRows, error: insertErr } = await supabase
+                .from('diretoria')
+                .insert(normalized)
+                .select('id,nome,cargo,foto')
+              if (!insertErr && Array.isArray(insertedRows)) {
+                const merged = [...list, ...insertedRows]
+                setItems(merged)
+                try { localStorage.setItem('diretoria-list', JSON.stringify(merged)) } catch {}
+              }
+            }
+          } catch (migErr) {
+            console.warn('Migração automática de diretoria falhou ou não necessária:', migErr)
+          }
+        } else {
+          const raw = localStorage.getItem('diretoria-list')
+          const list = raw ? JSON.parse(raw) : []
+          setItems(Array.isArray(list) ? list : [])
+        }
+      } catch (e) {
+        console.warn('Falha ao carregar diretoria do Supabase, usando localStorage.', e)
+        try {
+          const raw = localStorage.getItem('diretoria-list')
+          const list = raw ? JSON.parse(raw) : []
+          setItems(Array.isArray(list) ? list : [])
+        } catch {}
+      }
+    }
+    load()
   }, [])
 
   function handleFotoChange(e) {
@@ -22,7 +70,7 @@ export default function Celulas() {
     reader.readAsDataURL(file)
   }
 
-  function handleAdd(e) {
+  async function handleAdd(e) {
     e?.preventDefault?.()
     const nomeTrim = nome.trim()
     const cargoTrim = cargo.trim()
@@ -30,21 +78,49 @@ export default function Celulas() {
       alert('Preencha nome e cargo.')
       return
     }
-    const next = [
-      ...items,
-      { id: Date.now(), nome: nomeTrim, cargo: cargoTrim, foto }
-    ]
-    setItems(next)
-    try { localStorage.setItem('diretoria-list', JSON.stringify(next)) } catch {}
-    setNome('')
-    setCargo('')
-    setFoto('')
+    const newItem = { id: Date.now(), nome: nomeTrim, cargo: cargoTrim, foto }
+    try {
+      if (supabase.from) {
+        const { error } = await supabase
+          .from('diretoria')
+          .insert([newItem])
+        if (error) throw error
+      }
+      const next = [...items, newItem]
+      setItems(next)
+      try { localStorage.setItem('diretoria-list', JSON.stringify(next)) } catch {}
+      setNome('')
+      setCargo('')
+      setFoto('')
+    } catch (err) {
+      console.error('Erro ao salvar no Supabase, mantendo localStorage:', err)
+      const next = [...items, newItem]
+      setItems(next)
+      try { localStorage.setItem('diretoria-list', JSON.stringify(next)) } catch {}
+      setNome('')
+      setCargo('')
+      setFoto('')
+    }
   }
 
-  function handleDelete(id) {
-    const next = items.filter(i => i.id !== id)
-    setItems(next)
-    try { localStorage.setItem('diretoria-list', JSON.stringify(next)) } catch {}
+  async function handleDelete(id) {
+    try {
+      if (supabase.from) {
+        const { error } = await supabase
+          .from('diretoria')
+          .delete()
+          .eq('id', id)
+        if (error) throw error
+      }
+      const next = items.filter(i => i.id !== id)
+      setItems(next)
+      try { localStorage.setItem('diretoria-list', JSON.stringify(next)) } catch {}
+    } catch (err) {
+      console.error('Erro ao excluir no Supabase, atualizando localStorage mesmo assim:', err)
+      const next = items.filter(i => i.id !== id)
+      setItems(next)
+      try { localStorage.setItem('diretoria-list', JSON.stringify(next)) } catch {}
+    }
   }
 
   function handleClear() {

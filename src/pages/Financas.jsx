@@ -10,6 +10,7 @@ export default function Financas() {
   const [data, setData] = useState('')
   const [pagante, setPagante] = useState('')
   const [uso, setUso] = useState('')
+  const [deleteTipo, setDeleteTipo] = useState('')
 
   function formatBR(iso) {
     if (!iso) return ''
@@ -55,6 +56,35 @@ export default function Financas() {
             if (error) throw error
             if (Array.isArray(data)) {
               setItems(data)
+              // Migração automática: inserir no Supabase itens existentes no localStorage que não estejam na tabela
+              try {
+                const rawLocal = localStorage.getItem('financas-list')
+                const localList = rawLocal ? JSON.parse(rawLocal) : []
+                const keyOf = (i) => `${String(i.tipo)}|${String(i.valor)}|${String(i.data).slice(0,10)}|${String(i.pagante||'')}`
+                const keysRemote = new Set(data.map(keyOf))
+                const toInsert = (Array.isArray(localList) ? localList : []).filter(i => !keysRemote.has(keyOf(i)))
+                if (toInsert.length) {
+                  const normalized = toInsert.map(i => ({
+                    tipo: i.tipo,
+                    valor: Number(i.valor||0),
+                    data: String(i.data).slice(0,10),
+                    pagante: String(i.pagante||'').trim(),
+                    uso: String(i.tipo) === 'despesa' ? String(i.uso||'').trim() : ''
+                  }))
+                  const { data: insertedRows, error: insertErr } = await supabase
+                    .from('financas')
+                    .insert(normalized)
+                    .select('*')
+                  if (!insertErr && Array.isArray(insertedRows)) {
+                    const merged = [...insertedRows, ...data].sort((a, b) => String(b.data).localeCompare(String(a.data)))
+                    setItems(merged)
+                    try { localStorage.setItem('financas-list', JSON.stringify(merged)) } catch {}
+                    try { window.dispatchEvent(new CustomEvent('financas:updated')) } catch {}
+                  }
+                }
+              } catch (migErr) {
+                console.warn('Migração automática de finanças falhou ou não necessária:', migErr)
+              }
             } else {
               fallbackLocal()
             }
@@ -166,6 +196,11 @@ export default function Financas() {
     }))
   }, [items])
 
+  const tiposDisponiveis = useMemo(() => {
+    const set = new Set(items.map(i => String(i.tipo)))
+    return Array.from(set).sort()
+  }, [items])
+
   function handlePrintPDF() {
     if (!items || items.length === 0) {
       alert('Não há lançamentos para imprimir.')
@@ -272,6 +307,78 @@ export default function Financas() {
       .replace(/'/g, '&#039;')
   }
 
+  async function handleDelete(item) {
+    const ok = window.confirm('Excluir este lançamento?')
+    if (!ok) return
+    try {
+      // Excluir no Supabase quando disponível para refletir em todos os usuários/navegadores
+      if (supabase.from) {
+        if (item?.id != null) {
+          const { error } = await supabase.from('financas').delete().eq('id', item.id)
+          if (error) throw error
+        } else {
+          // Melhor esforço: excluir por composição dos campos quando não há id
+          try {
+            const { error } = await supabase
+              .from('financas')
+              .delete()
+              .eq('tipo', String(item.tipo))
+              .eq('valor', Number(item.valor || 0))
+              .eq('data', String(item.data).slice(0, 10))
+              .eq('pagante', String(item.pagante || '').trim())
+              .eq('uso', String(item.tipo) === 'despesa' ? String(item.uso || '').trim() : '')
+            if (error) console.warn('Falha ao excluir remoto por composição:', error)
+          } catch (e) {
+            console.warn('Exclusão remota por composição não realizada:', e)
+          }
+        }
+      }
+      // Atualizar lista local e localStorage
+      const next = items.filter((i) => {
+        if (item?.id != null) return i.id !== item.id
+        const sameBase =
+          String(i.tipo) === String(item.tipo) &&
+          Number(i.valor || 0) === Number(item.valor || 0) &&
+          String(i.data).slice(0, 10) === String(item.data).slice(0, 10) &&
+          String(i.pagante || '').trim() === String(item.pagante || '').trim()
+        const sameUso = String(item.tipo) === 'despesa' ? (String(i.uso || '').trim() === String(item.uso || '').trim()) : true
+        const isSame = sameBase && sameUso
+        return !isSame
+      }).sort((a, b) => String(b.data).localeCompare(String(a.data)))
+      setItems(next)
+      try { localStorage.setItem('financas-list', JSON.stringify(next)) } catch {}
+      try { window.dispatchEvent(new CustomEvent('financas:updated')) } catch {}
+    } catch (e) {
+      console.error(e)
+      alert('Falha ao excluir lançamento.')
+    }
+  }
+
+  async function handleDeleteByTipo() {
+    if (!deleteTipo) return
+    const label = labelTipo(deleteTipo)
+    const ok = window.confirm(`Excluir TODOS os lançamentos do tipo "${label}"?`)
+    if (!ok) return
+    try {
+      if (supabase.from) {
+        try {
+          const { error } = await supabase.from('financas').delete().eq('tipo', deleteTipo)
+          if (error) throw error
+        } catch (e) {
+          console.warn('Falha ao excluir no Supabase por tipo:', e)
+        }
+      }
+      const next = items.filter(i => String(i.tipo) !== String(deleteTipo))
+      setItems(next)
+      try { localStorage.setItem('financas-list', JSON.stringify(next)) } catch {}
+      try { window.dispatchEvent(new CustomEvent('financas:updated')) } catch {}
+      setDeleteTipo('')
+    } catch (e) {
+      console.error(e)
+      alert('Falha ao excluir por tipo.')
+    }
+  }
+
   return (
     <div className="space-y-6">
       <h1 className="font-montserrat text-2xl font-bold text-primary dark:text-light">Finanças</h1>
@@ -344,6 +451,7 @@ export default function Financas() {
                         <th className="p-3">Data</th>
                         <th className="p-3">Pagante</th>
                         <th className="p-3">Uso da despesa</th>
+                        <th className="p-3">Ações</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -354,6 +462,9 @@ export default function Financas() {
                           <td className="p-3 dark:text-gray-100">{formatBR(i.data)}</td>
                           <td className="p-3 dark:text-gray-100">{i.pagante || ''}</td>
                           <td className="p-3 dark:text-gray-100">{i.tipo === 'despesa' ? (i.uso || '') : ''}</td>
+                          <td className="p-3">
+                            <button onClick={() => handleDelete(i)} className="btn-neon">Excluir</button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -367,6 +478,13 @@ export default function Financas() {
           <button onClick={() => setShowForm(s => !s)} className="btn-neon">Adicionar lançamento</button>
           <button onClick={handleExport} className="btn-neon">Exportar</button>
           <button onClick={handlePrintPDF} className="btn-neon">Imprimir PDF</button>
+          <select value={deleteTipo} onChange={e => setDeleteTipo(e.target.value)} className="input">
+            <option value="">Excluir por tipo...</option>
+            {tiposDisponiveis.map(t => (
+              <option key={t} value={t}>{labelTipo(t)}</option>
+            ))}
+          </select>
+          <button onClick={handleDeleteByTipo} disabled={!deleteTipo} className="btn-neon">Excluir por tipo</button>
         </div>
       </div>
     </div>

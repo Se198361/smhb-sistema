@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { supabase } from '../lib/supabase'
 
 export default function Membros() {
   const [query, setQuery] = useState('')
@@ -24,57 +25,141 @@ export default function Membros() {
   }
 
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem('membros-list')
-      if (raw) {
-        const parsed = JSON.parse(raw)
-        if (Array.isArray(parsed)) setMembers(parsed)
-        else setMembers([])
-      } else {
-        setMembers([
-          { id: 1, nome: 'João Silva', endereco: 'Rua das Flores, 123', telefone: '(11) 99999-0000' },
-          { id: 2, nome: 'Maria Souza', endereco: 'Av. Central, 456', telefone: '(11) 98888-1111' },
-        ])
+    async function load() {
+      try {
+        if (supabase.from) {
+          try {
+            const { data, error } = await supabase
+              .from('membros')
+              .select('*')
+              .order('id', { ascending: false })
+            if (error) throw error
+            const list = Array.isArray(data) ? data : []
+            setMembers(list)
+            try { localStorage.setItem('membros-list', JSON.stringify(list)) } catch {}
+            // Migração automática: inserir no Supabase itens existentes no localStorage que não estejam na tabela
+            try {
+              const rawLocal = localStorage.getItem('membros-list')
+              const localList = rawLocal ? JSON.parse(rawLocal) : []
+              const keyOf = (m) => `${String(m.nome||'').trim()}|${String(m.telefone||'').trim()}|${String(m.aniversario||'').slice(0,10)}`
+              const keysRemote = new Set(list.map(keyOf))
+              const toInsert = (Array.isArray(localList) ? localList : []).filter(m => !keysRemote.has(keyOf(m)))
+              if (toInsert.length) {
+                const normalized = toInsert.map(m => ({
+                  nome: String(m.nome||'').trim(),
+                  endereco: String(m.endereco||m.grupo||'').trim(),
+                  telefone: String(m.telefone||'').trim(),
+                  aniversario: m.aniversario ? String(m.aniversario).slice(0,10) : null,
+                  foto: m.foto || ''
+                }))
+                const { data: insertedRows, error: insertErr } = await supabase
+                  .from('membros')
+                  .insert(normalized)
+                  .select('*')
+                if (!insertErr && Array.isArray(insertedRows)) {
+                  const merged = [...insertedRows, ...list]
+                  setMembers(merged)
+                  try { localStorage.setItem('membros-list', JSON.stringify(merged)) } catch {}
+                  try { window.dispatchEvent(new CustomEvent('membros:updated')) } catch {}
+                }
+              }
+            } catch (migErr) {
+              console.warn('Migração automática de membros falhou ou não necessária:', migErr)
+            }
+          } catch (err) {
+            console.warn('Supabase indisponível, usando localStorage:', err)
+            const raw = localStorage.getItem('membros-list')
+            const parsed = raw ? JSON.parse(raw) : []
+            setMembers(Array.isArray(parsed) ? parsed : [])
+          }
+        } else {
+          const raw = localStorage.getItem('membros-list')
+          const parsed = raw ? JSON.parse(raw) : []
+          setMembers(Array.isArray(parsed) ? parsed : [])
+        }
+      } catch {
+        setMembers([])
+      } finally {
+        setLoading(false)
       }
-    } catch {
-      setMembers([])
     }
-    setLoading(false)
+    load()
   }, [])
 
-  function handleAdd(e) {
+  async function handleAdd(e) {
     e.preventDefault()
     if (!nome.trim() || !endereco.trim() || !telefone.trim()) {
       alert('Informe nome, endereço e telefone do membro.')
       return
     }
-    // Se estiver editando, atualiza membro existente
-    if (editingId !== null) {
-      const next = members.map(m => m.id === editingId ? { ...m, nome, endereco, telefone, aniversario, foto } : m)
-      setMembers(next)
-      try { localStorage.setItem('membros-list', JSON.stringify(next)) } catch {}
+    try {
+      // Atualização de membro existente
+      if (editingId !== null) {
+        const updated = { nome, endereco, telefone, aniversario, foto }
+        if (supabase.from) {
+          try {
+            const { error } = await supabase
+              .from('membros')
+              .update(updated)
+              .eq('id', editingId)
+            if (error) console.warn('Falha ao atualizar no Supabase, persistindo local:', error)
+          } catch (err) {
+            console.warn('Supabase indisponível ao atualizar, usando localStorage:', err)
+          }
+        }
+        const next = members.map(m => m.id === editingId ? { ...m, ...updated, id: editingId } : m)
+        setMembers(next)
+        try { localStorage.setItem('membros-list', JSON.stringify(next)) } catch {}
+        try { window.dispatchEvent(new CustomEvent('membros:updated')) } catch {}
+        setEditingId(null)
+        setNome('')
+        setEndereco('')
+        setTelefone('')
+        setAniversario('')
+        setFoto('')
+        setShowForm(false)
+        return
+      }
+
+      // Inserção de novo membro
+      const novo = { id: Date.now(), nome, endereco, telefone, aniversario, foto }
+      if (supabase.from) {
+        try {
+          const { data: inserted, error } = await supabase
+            .from('membros')
+            .insert([novo])
+            .select('*')
+          if (!error && Array.isArray(inserted) && inserted[0]) {
+            const row = inserted[0]
+            setMembers(prev => [row, ...prev])
+            try { localStorage.setItem('membros-list', JSON.stringify([row, ...members])) } catch {}
+          } else {
+            const next = [novo, ...members]
+            setMembers(next)
+            try { localStorage.setItem('membros-list', JSON.stringify(next)) } catch {}
+          }
+        } catch (err) {
+          console.warn('Supabase indisponível ao inserir, usando localStorage:', err)
+          const next = [novo, ...members]
+          setMembers(next)
+          try { localStorage.setItem('membros-list', JSON.stringify(next)) } catch {}
+        }
+      } else {
+        const next = [novo, ...members]
+        setMembers(next)
+        try { localStorage.setItem('membros-list', JSON.stringify(next)) } catch {}
+      }
       try { window.dispatchEvent(new CustomEvent('membros:updated')) } catch {}
-      setEditingId(null)
       setNome('')
       setEndereco('')
       setTelefone('')
       setAniversario('')
       setFoto('')
       setShowForm(false)
-      return
+    } catch (err) {
+      console.error(err)
+      alert('Falha ao salvar membro.')
     }
-    // Caso contrário, adiciona novo membro
-    const novo = { id: Date.now(), nome, endereco, telefone, aniversario, foto }
-    const next = [novo, ...members]
-    setMembers(next)
-    try { localStorage.setItem('membros-list', JSON.stringify(next)) } catch {}
-    try { window.dispatchEvent(new CustomEvent('membros:updated')) } catch {}
-    setNome('')
-    setEndereco('')
-    setTelefone('')
-    setAniversario('')
-    setFoto('')
-    setShowForm(false)
   }
 
   const filtered = members.filter(m => m.nome.toLowerCase().includes(query.toLowerCase()))

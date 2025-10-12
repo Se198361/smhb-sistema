@@ -98,12 +98,31 @@ export default function Dashboard() {
     return candidate
   }
 
-  function loadBirthdays() {
+  async function loadBirthdays() {
     try {
-      const raw = localStorage.getItem('membros-list')
-      const list = raw ? JSON.parse(raw) : []
       const today = new Date()
       const msDay = 24 * 60 * 60 * 1000
+      const readLocal = () => {
+        try {
+          const raw = localStorage.getItem('membros-list')
+          const list = raw ? JSON.parse(raw) : []
+          return Array.isArray(list) ? list : []
+        } catch { return [] }
+      }
+      let list = readLocal()
+      if (supabase.from) {
+        try {
+          const { data: rows, error } = await supabase
+            .from('membros')
+            .select('nome,aniversario')
+          if (!error && Array.isArray(rows)) {
+            list = rows
+            try { localStorage.setItem('membros-list', JSON.stringify(rows)) } catch {}
+          }
+        } catch (err) {
+          console.warn('Supabase indisponível ao carregar membros, usando localStorage:', err)
+        }
+      }
       const upcoming = list
         .filter(m => m && m.nome && m.aniversario)
         .map(m => {

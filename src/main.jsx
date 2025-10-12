@@ -1,6 +1,6 @@
 import React, { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import './index.css'
 import { AuthProvider, useAuth } from './context/AuthContext.jsx'
 import Layout from './components/Layout.jsx'
@@ -14,6 +14,12 @@ import Eventos from './pages/Eventos.jsx'
 import Conteudo from './pages/Conteudo.jsx'
 import Avisos from './pages/Avisos.jsx'
 import Crachas from './pages/Crachas.jsx'
+
+// Normalize URLs with hash (/#/login) to path (/login)
+if (typeof window !== 'undefined' && window.location.hash && window.location.hash.startsWith('#/')) {
+  const newPath = window.location.hash.slice(1)
+  try { window.history.replaceState(null, '', newPath) } catch {}
+}
 
 function PrivateRoute({ children }) {
   const { user, loading } = useAuth()
@@ -57,7 +63,7 @@ createRoot(document.getElementById('root')).render(
   <StrictMode>
     <AuthProvider>
       <ErrorBoundary>
-        <HashRouter>
+        <BrowserRouter>
           <Routes>
             <Route element={<Layout />}>
               <Route path="/" element={<Navigate to="/dashboard" />} />
@@ -73,7 +79,7 @@ createRoot(document.getElementById('root')).render(
               <Route path="/crachas" element={<PrivateRoute><Crachas /></PrivateRoute>} />
             </Route>
           </Routes>
-        </HashRouter>
+        </BrowserRouter>
       </ErrorBoundary>
     </AuthProvider>
   </StrictMode>,

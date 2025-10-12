@@ -23,6 +23,34 @@ export default function Eventos() {
             if (error) throw error
             setEventos(rows || [])
             try { localStorage.setItem('eventos-list', JSON.stringify(rows || [])) } catch {}
+            // Migração automática: inserir no Supabase itens existentes no localStorage que não estejam na tabela
+            try {
+              const rawLocal = localStorage.getItem('eventos-list')
+              const localList = rawLocal ? JSON.parse(rawLocal) : []
+              const keyOf = (e) => `${String(e.titulo||'').trim()}|${String(e.data).slice(0,10)}|${String(e.horario||'')}|${String(e.local||'').trim()}`
+              const keysRemote = new Set((rows||[]).map(keyOf))
+              const toInsert = (Array.isArray(localList) ? localList : []).filter(e => !keysRemote.has(keyOf(e)))
+              if (toInsert.length) {
+                const normalized = toInsert.map(e => ({
+                  titulo: String(e.titulo||'').trim(),
+                  data: String(e.data).slice(0,10),
+                  horario: String(e.horario||''),
+                  local: String(e.local||'').trim()
+                }))
+                const { data: insertedRows, error: insertErr } = await supabase
+                  .from('eventos')
+                  .insert(normalized)
+                  .select('*')
+                if (!insertErr && Array.isArray(insertedRows)) {
+                  const merged = [...(rows||[]), ...insertedRows]
+                  setEventos(merged)
+                  try { localStorage.setItem('eventos-list', JSON.stringify(merged)) } catch {}
+                  try { window.dispatchEvent(new CustomEvent('eventos:updated')) } catch {}
+                }
+              }
+            } catch (migErr) {
+              console.warn('Migração automática de eventos falhou ou não necessária:', migErr)
+            }
           } catch (err) {
             console.warn('Supabase indisponível ou tabela "eventos" ausente. Usando localStorage.', err)
             const raw = localStorage.getItem('eventos-list')
