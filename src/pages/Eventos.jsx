@@ -14,61 +14,24 @@ export default function Eventos() {
   useEffect(() => {
     async function load() {
       try {
-        if (supabase.from) {
-          try {
-            const { data: rows, error } = await supabase
-              .from('eventos')
-              .select('*')
-              .order('data', { ascending: true })
-            if (error) throw error
-            setEventos(rows || [])
-            try { localStorage.setItem('eventos-list', JSON.stringify(rows || [])) } catch {}
-            // Migração automática: inserir no Supabase itens existentes no localStorage que não estejam na tabela
-            try {
-              const rawLocal = localStorage.getItem('eventos-list')
-              const localList = rawLocal ? JSON.parse(rawLocal) : []
-              const keyOf = (e) => `${String(e.titulo||'').trim()}|${String(e.data).slice(0,10)}|${String(e.horario||'')}|${String(e.local||'').trim()}`
-              const keysRemote = new Set((rows||[]).map(keyOf))
-              const toInsert = (Array.isArray(localList) ? localList : []).filter(e => !keysRemote.has(keyOf(e)))
-              if (toInsert.length) {
-                const normalized = toInsert.map(e => ({
-                  titulo: String(e.titulo||'').trim(),
-                  data: String(e.data).slice(0,10),
-                  horario: String(e.horario||''),
-                  local: String(e.local||'').trim()
-                }))
-                const { data: insertedRows, error: insertErr } = await supabase
-                  .from('eventos')
-                  .insert(normalized)
-                  .select('*')
-                if (!insertErr && Array.isArray(insertedRows)) {
-                  const merged = [...(rows||[]), ...insertedRows]
-                  setEventos(merged)
-                  try { localStorage.setItem('eventos-list', JSON.stringify(merged)) } catch {}
-                  try { window.dispatchEvent(new CustomEvent('eventos:updated')) } catch {}
-                }
-              }
-            } catch (migErr) {
-              console.warn('Migração automática de eventos falhou ou não necessária:', migErr)
-            }
-          } catch (err) {
-            console.warn('Supabase indisponível ou tabela "eventos" ausente. Usando localStorage.', err)
-            const raw = localStorage.getItem('eventos-list')
-            const list = raw ? JSON.parse(raw) : []
-            setEventos(Array.isArray(list) ? list : [])
-          }
-        } else {
-          const raw = localStorage.getItem('eventos-list')
-          const list = raw ? JSON.parse(raw) : []
-          setEventos(Array.isArray(list) ? list : [])
-        }
+        const { data: rows, error } = await supabase
+          .from('eventos')
+          .select('*')
+          .order('data', { ascending: true })
+        if (error) throw error
+        setEventos(rows || [])
       } catch (e) {
         console.error(e)
+        setEventos([])
       } finally {
         setLoading(false)
       }
     }
     load()
+    const ch = supabase?.channel?.('eventos-page')
+      ?.on('postgres_changes', { event: '*', schema: 'public', table: 'eventos' }, load)
+      ?.subscribe()
+    return () => { try { ch?.unsubscribe() } catch {} }
   }, [])
 
   function eventDateTime(ev) {
@@ -93,46 +56,31 @@ export default function Eventos() {
       if (editingId !== null) {
         // Atualiza evento existente
         let updated = { id: editingId, titulo, data, horario, local }
-        if (supabase.from) {
-          try {
-            const { data: rows, error } = await supabase
-              .from('eventos')
-              .update({ titulo, data, horario, local })
-              .eq('id', editingId)
-              .select('*')
-            if (!error && Array.isArray(rows) && rows[0]) updated = rows[0]
-          } catch (err) {
-            console.warn('Falha ao atualizar no Supabase, seguirá com localStorage:', err)
-          }
-        }
+        const { data: rows, error } = await supabase
+          .from('eventos')
+          .update({ titulo, data, horario, local })
+          .eq('id', editingId)
+          .select('*')
+        if (error) throw error
+        if (Array.isArray(rows) && rows[0]) updated = rows[0]
         setEventos(prev => {
           const next = prev.map(ev => ev.id === editingId ? { ...ev, ...updated } : ev)
           next.sort((a, b) => eventDateTime(a) - eventDateTime(b))
-          try { localStorage.setItem('eventos-list', JSON.stringify(next)) } catch {}
-          try { window.dispatchEvent(new CustomEvent('eventos:updated')) } catch {}
           return next
         })
       } else {
         // Cria novo evento
         let novo = { id: Date.now(), titulo, data, horario, local }
-        if (supabase.from) {
-          try {
-            const { data: insertedData, error } = await supabase
-              .from('eventos')
-              .insert([{ titulo, data, horario, local }])
-              .select('*')
-            if (error) throw error
-            const inserted = Array.isArray(insertedData) ? insertedData[0] : insertedData
-            if (inserted) novo = inserted
-          } catch (err) {
-            console.warn('Falha ao inserir no Supabase, usando localStorage:', err)
-          }
-        }
+        const { data: insertedData, error } = await supabase
+          .from('eventos')
+          .insert([{ titulo, data, horario, local }])
+          .select('*')
+        if (error) throw error
+        const inserted = Array.isArray(insertedData) ? insertedData[0] : insertedData
+        if (inserted) novo = inserted
         setEventos(prev => {
           const next = [...prev, novo]
           next.sort((a, b) => eventDateTime(a) - eventDateTime(b))
-          try { localStorage.setItem('eventos-list', JSON.stringify(next)) } catch {}
-          try { window.dispatchEvent(new CustomEvent('eventos:updated')) } catch {}
           return next
         })
       }
@@ -150,22 +98,14 @@ export default function Eventos() {
   async function handleDelete(id) {
     if (!id) return
     try {
-      if (supabase.from) {
-        try {
-          const { error } = await supabase
-            .from('eventos')
-            .delete()
-            .eq('id', id)
-          if (error) console.warn('Erro ao excluir no Supabase, seguirá com localStorage:', error)
-        } catch (err) {
-          console.warn('Falha ao excluir no Supabase, seguirá com localStorage:', err)
-        }
-      }
+      const { error } = await supabase
+        .from('eventos')
+        .delete()
+        .eq('id', id)
+      if (error) throw error
       setEventos(prev => {
         const next = prev.filter(e => e.id !== id)
         next.sort((a, b) => eventDateTime(a) - eventDateTime(b))
-        try { localStorage.setItem('eventos-list', JSON.stringify(next)) } catch {}
-        try { window.dispatchEvent(new CustomEvent('eventos:updated')) } catch {}
         return next
       })
     } catch (err) {
