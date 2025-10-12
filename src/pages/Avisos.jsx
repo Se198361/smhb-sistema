@@ -340,13 +340,7 @@ export default function Avisos() {
     return () => clearTimeout(t)
   }, [search, filterInicio, filterFim])
 
-  // Sincroniza avisos com localStorage para o Dashboard (fallback quando Supabase não está ativo)
-  useEffect(() => {
-    try {
-      const list = (Array.isArray(allAvisos) && allAvisos.length) ? allAvisos : avisos
-      localStorage.setItem('avisos-list', JSON.stringify(list))
-    } catch (_) {}
-  }, [avisos, allAvisos])
+  // Removido: sincronização com localStorage para evitar divergências entre navegadores
 
   function handlePrint() {
     try {
